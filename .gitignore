@@ -1,0 +1,9 @@
+google-cloud-sdk
+chroma*/
+.vscode/
+__pycache__/
+chroma*/
+.env
+uv.lock
+*.pdf
+*.txt

@@ -1,0 +1,46 @@
+
+[project]
+name = "llms"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+
+# Runtime dependencies
+dependencies = [
+    "langchain-community",
+    "langchain-core",
+    "langchain-chroma",
+    "langchain-ollama",
+    "langchain-google-genai",
+    "langchain==1.0.7",
+    "langchain-text-splitters",
+    "langgraph-checkpoint-postgres",
+    "psycopg-binary",
+    "tqdm",
+
+    "dotenv",
+    "pypdf",
+    "ruff",
+    "ollama",
+    "bs4",
+    "typer",
+    # translate_audio
+    "pytubefix",
+    "google-genai",
+    "docarray",
+    # multimodel chat
+    "unstructured[all-docs]",
+    "pillow", 
+    "lxml",
+    "chromadb",
+    "tiktoken",
+    "langchain-groq",
+
+    #google adk
+    "gcloud",
+    "langgraph",
+    "google-cloud-aiplatform",
+    "langchain-google-genai",
+    "google-adk",
+    "deprecated",
+]
