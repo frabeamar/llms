@@ -2,18 +2,17 @@ import os
 import tempfile
 
 import dotenv
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 import typer
-from google import genai 
-from pytubefix import YouTube
+from google import genai
+from langchain_chroma import Chroma
 from langchain_community.document_loaders import TextLoader
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnableParallel, RunnablePassthrough
-from langchain_chroma import Chroma
-from model import load_gemini_chat, load_gemini_embeddings, save_embedding_locally
 from langchain_core.prompts.chat import ChatPromptTemplate
-from langchain_community.vectorstores import DocArrayInMemorySearch
+from langchain_core.runnables import RunnablePassthrough
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from pytubefix import YouTube
 
+from model import load_gemini_chat, load_gemini_embeddings, save_embedding_locally
 
 dotenv.load_dotenv(".env")
 
@@ -47,14 +46,14 @@ def download_and_transcribe(url: str = YOUTUBE_VIDEO):
 
     print("Done — transcription.txt written.")
 
+
 @app.command()
 def chat_with_video():
-
     loader = TextLoader("transcription.txt")
     text_documents = loader.load()
     parser = StrOutputParser()
     model = load_gemini_chat()
- 
+
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=20)
     documents = text_splitter.split_documents(text_documents)
     embeddings = load_gemini_embeddings()
@@ -64,7 +63,7 @@ def chat_with_video():
         persist_directory="./chroma_youtube_db",
     )
     save_embedding_locally(vector_store=vector_store, all_splits=documents)
-    #RunnablePassthrough copies the input over
+    # RunnablePassthrough copies the input over
     template = """
     Answer the question based on the context below. If you can't 
     answer the question, reply "I don't know".
@@ -90,5 +89,6 @@ def chat_with_video():
     # only gemini pro can answer the question
     res = chain.invoke("What is synthetic intelligence?")
     print(res)
+
 
 app()

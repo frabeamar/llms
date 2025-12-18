@@ -18,15 +18,11 @@ from langchain_core.documents import Document
 from langchain_core.runnables import chain
 from langchain_ollama import ChatOllama, OllamaEmbeddings, OllamaLLM
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-import tqdm
 from typer import Typer
-
 from llms.model import load_gemini_embeddings
-from langsmith import uuid7
 
 from model import save_embedding_locally
 dotenv.load_dotenv(".env")
-import hashlib
 app = Typer(pretty_exceptions_show_locals=False)
 
 @app.command()
