@@ -14,6 +14,11 @@ from google.adk.runners import InMemoryRunner
 from google.adk.tools import FunctionTool
 from google.genai import types
 
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.adk.tools import google_search
+
+
 load_dotenv(".env")
 # --- Define Tool Functions ---
 # These functions simulate the actions of the specialist agents.
@@ -76,7 +81,6 @@ def run_agent(
                 parts=[types.Part(text=request)],
             ),
         ):
-
             if not (event.is_final_response() and event.content):
                 continue
 
@@ -85,7 +89,11 @@ def run_agent(
             if getattr(event.content, "text", None):
                 text = event.content.text
             elif event.content.parts:
-                text = event.author +":\n"+ "".join(part.text for part in event.content.parts if part.text)
+                text = (
+                    event.author
+                    + ":\n"
+                    + "".join(part.text for part in event.content.parts if part.text)
+                )
 
             if text:
                 responses.append(text)
@@ -169,7 +177,7 @@ async def routing():
     print(f"Final Output D: {result_d}")
 
 
-def google_search(request: str) -> str:
+def mock_google_search(request: str) -> str:
     """
     Handles searching the net for information
     Args:
@@ -197,7 +205,7 @@ async def parallel_execution():
     Output *only* the summary.
     """,
         description="Researches renewable energy sources.",
-        tools=[google_search],
+        tools=[mock_google_search],
         # Store result in state for the merger agent
         output_key="renewable_energy_result",
     )
@@ -213,7 +221,7 @@ async def parallel_execution():
     Output *only* the summary.
     """,
         description="Researches electric vehicle technology.",
-        tools=[google_search],
+        tools=[mock_google_search],
         # Store result in state for the merger agent
         output_key="ev_technology_result",
     )
@@ -229,7 +237,7 @@ async def parallel_execution():
     Output *only* the summary.
     """,
         description="Researches carbon capture methods.",
-        tools=[google_search],
+        tools=[mock_google_search],
         # Store result in state for the merger agent
         output_key="carbon_capture_result",
     )
@@ -318,7 +326,7 @@ async def reflection():
         name="DraftWriter",
         description="Generates initial draft content on a given subject.",
         instruction="Write a short, informative paragraph about the user's subject.",
-        output_key="draft_text",  # The output is saved to this state key for intermediate processing. 
+        output_key="draft_text",  # The output is saved to this state key for intermediate processing.
         # it gets written out to event.actions.state_delta
         model=GEMINI_MODEL,
     )
@@ -354,12 +362,38 @@ async def reflection():
     # Execution Flow:
     # 1. generator runs -> saves its paragraph to state['draft_text'].
     # 2. reviewer runs -> reads state['draft_text'] and saves its dictionary output to state['review_output'].
-        # the output of the reviewer is a code box with a json inside
-        # should it be parsed? with pydantic?
+    # the output of the reviewer is a code box with a json inside
+    # should it be parsed? with pydantic?
+
+
+async def builtin_google_search():
+
+    # Define Agent with access to search tool
+    root_agent = Agent(
+        name="basic_search_agent",
+        # model="gemini-2.0-flash-exp",
+        model=GEMINI_MODEL,
+        description="Agent to answer questions using Google Search.",
+        instruction="I can answer your questions by searching the internet. Just ask me anything!",
+        tools=[
+            google_search
+        ],  # Google Search is a pre-built tool to perform Google searches.
+    )
+    runner, user_id, session_id = await new_session(root_agent)
+    run_agent(
+        runner,
+        "What are the latest advancements in AI technology as of 2024?",
+        user_id,
+        session_id,
+    )
+
+
+
+
 
 
 async def main():
-    await reflection()
+    await builtin_google_search()
 
 
 if __name__ == "__main__":
