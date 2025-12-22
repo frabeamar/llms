@@ -1,16 +1,14 @@
-# Copyright (c) 2025 Marco Fago
-#
-# This code is licensed under the MIT License.
-# See the LICENSE file in the repository for the full license text.
 import asyncio
 import uuid
+from typing import AsyncGenerator
 
 from dotenv import load_dotenv
-from google.adk.agents import Agent, LlmAgent
-from google.adk.agents.base_agent import BaseAgent
+from google.adk.agents import Agent, BaseAgent, LlmAgent
+from google.adk.agents.invocation_context import InvocationContext
 from google.adk.agents.parallel_agent import ParallelAgent
 from google.adk.agents.sequential_agent import SequentialAgent
 from google.adk.code_executors import BuiltInCodeExecutor
+from google.adk.events import Event
 from google.adk.runners import InMemoryRunner, Runner
 from google.adk.sessions import InMemorySessionService
 from google.adk.tools import FunctionTool, google_search
@@ -21,7 +19,7 @@ load_dotenv(".env")
 # These functions simulate the actions of the specialist agents.
 # running into 429 with gemini-2.0?
 GEMINI_MODEL = "gemini-2.5-flash"
-# GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-2.5-flash-lite"
 
 
 def booking_handler(request: str) -> str:
@@ -401,7 +399,9 @@ async def call_agent_async(query):
     app_name = "calculator"
     session_service = InMemorySessionService()  # temporary memory of the session
     # stored in RAM, gets deleted after program end
-    await session_service.create_session(app_name = app_name, user_id=user_id, session_id=session_id)
+    await session_service.create_session(
+        app_name=app_name, user_id=user_id, session_id=session_id
+    )
 
     runner = Runner(  # handles cloud execution -> not sure for which aspects it is different than InMemoryRunner
         agent=code_agent,
@@ -449,9 +449,59 @@ async def call_agent_async(query):
         print(f"ERROR during agent run: {e}")
 
 
+class TaskExecutor(BaseAgent):
+    """A specialized agent with custom, non-LLM behavior."""
+
+    name: str = "TaskExecutor"
+    description: str = "Executes a predefined task."
+
+    async def _run_async_impl(
+        self, context: InvocationContext
+    ) -> AsyncGenerator[Event, None]: # AsyncGenerator[yield_type, send_type] you can send in values with send()!
+        """Custom implementation logic for the task."""
+        print("I am executing the task...", self.name)
+        content = types.Content(role="system", parts=[types.Part(text="Task fineshed")])
+        yield Event(author=self.name, content=content)
+
+
+async def multi_agent_collaboration():
+    # Correctly implement a custom agent by extending BaseAgent
+    # Define individual agents with proper initialization
+    # LlmAgent requires a model to be specified.
+    greeter = LlmAgent(
+        name="Greeter",
+        model=GEMINI_MODEL,
+        instruction="You are a friendly greeter.",
+    )
+    task_doer = TaskExecutor()  # Instantiate our concrete custom agent
+
+    # Create a parent agent and assign its sub-agents
+    # The parent agent's description and instructions should guide its delegation logic.
+    coordinator = LlmAgent(
+        name="Coordinator",
+        model=GEMINI_MODEL,
+        description="A coordinator that can greet users and execute tasks.",
+        instruction="When asked to greet, delegate to the Greeter. When asked to perform a task, delegate to the TaskExecutor.",
+        sub_agents=[greeter, task_doer],
+    )
+
+    # The ADK framework automatically establishes the parent-child relationships.
+    # These assertions will pass if checked after initialization.
+    assert greeter.parent_agent == coordinator
+    assert task_doer.parent_agent == coordinator
+    runner, user_id, session_id = await new_session(coordinator)
+    run_agent(
+        runner,
+        "Please greet me and then perform the task.",
+        user_id,
+        session_id,
+    )
+
+
 async def main():
     # await builtin_google_search()
-    await call_agent_async("Calculate the value of (5 + 7) * 3")
+    # await call_agent_async("Calculate the value of (5 + 7) * 3")
+    await multi_agent_collaboration()
 
 
 if __name__ == "__main__":
