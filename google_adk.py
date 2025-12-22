@@ -7,12 +7,12 @@ import uuid
 
 from dotenv import load_dotenv
 from google.adk.agents import Agent, LlmAgent
+from google.adk.agents.base_agent import BaseAgent
 from google.adk.agents.parallel_agent import ParallelAgent
 from google.adk.agents.sequential_agent import SequentialAgent
 from google.adk.runners import InMemoryRunner
 from google.adk.tools import FunctionTool
 from google.genai import types
-from google.adk.agents.base_agent import BaseAgent
 
 load_dotenv(".env")
 # --- Define Tool Functions ---
@@ -55,38 +55,50 @@ def unclear_handler(request: str) -> str:
     return f"Coordinator could not delegate request: '{request}'. Please clarify."
 
 
-def run_agent(runner: InMemoryRunner, request: str, user_id: str, session_id: str):
-    """Runs the coordinator agent with a given request and delegates."""
+def run_agent(
+    runner: InMemoryRunner, request: str, user_id: str, session_id: str
+) -> list[str]:
+    """
+    Runs an agent pipeline and collects ALL text responses
+    from all final responses across agents.
+    """
 
-    # check that the session exists
-    print(f"\n--- Running Coordinator with request: '{request}' ---")
-    final_result = ""
+    print(f"\n--- Running agent with request: '{request}' ---")
+
+    responses: list[str] = []
+
     try:
         for event in runner.run(
             user_id=user_id,
             session_id=session_id,
-            new_message=types.Content(role="user", parts=[types.Part(text=request)]),
+            new_message=types.Content(
+                role="user",
+                parts=[types.Part(text=request)],
+            ),
         ):
-            if event.is_final_response() and event.content:
-                # Try to get text directly from event.content to avoid iterating parts
-                if hasattr(event.content, "text") and event.content.text:
-                    final_result = event.content.text
-                elif event.content.parts:
-                    # Fallback: Iterate through parts and extract text (might trigger warning)
-                    text_parts = [
-                        part.text for part in event.content.parts if part.text
-                    ]
-                    final_result = "".join(text_parts)
-                
-                # Assuming the loop should break after the final response
-                # break -> loop is not async: it cannot break
-                # you have in fligth work; cannot close main
-#
-        print(f"Coordinator Final Response: {final_result}")
-        return final_result
+
+            if not (event.is_final_response() and event.content):
+                continue
+
+            text = None
+
+            if getattr(event.content, "text", None):
+                text = event.content.text
+            elif event.content.parts:
+                text = event.author +":\n"+ "".join(part.text for part in event.content.parts if part.text)
+
+            if text:
+                responses.append(text)
+
+        print("Collected responses:")
+        for r in responses:
+            print("-", r)
+
+        return responses
+
     except Exception as e:
-        print(f"An error occurred while processing your request: {e}")
-        return f"An error occurred while processing your request: {e}"
+        print(f"An error occurred: {e}")
+        raise
 
 
 async def new_session(coordinator: BaseAgent):
@@ -94,8 +106,8 @@ async def new_session(coordinator: BaseAgent):
     user_id = "user_123"
     session_id = str(uuid.uuid4())
     await runner.session_service.create_session(
-            app_name=runner.app_name, user_id=user_id, session_id=session_id
-        )
+        app_name=runner.app_name, user_id=user_id, session_id=session_id
+    )
 
     return runner, user_id, session_id
 
@@ -306,7 +318,8 @@ async def reflection():
         name="DraftWriter",
         description="Generates initial draft content on a given subject.",
         instruction="Write a short, informative paragraph about the user's subject.",
-        output_key="draft_text",  # The output is saved to this state key.
+        output_key="draft_text",  # The output is saved to this state key for intermediate processing. 
+        # it gets written out to event.actions.state_delta
         model=GEMINI_MODEL,
     )
 
@@ -323,7 +336,7 @@ async def reflection():
         - "reasoning": A string providing a clear explanation for your status, citing specific issues if any are found.
         """,
         output_key="review_output",  # The structured dictionary is saved here.
-        model = GEMINI_MODEL,
+        model=GEMINI_MODEL,
     )
 
     # The SequentialAgent ensures the generator runs before the reviewer.
@@ -341,9 +354,13 @@ async def reflection():
     # Execution Flow:
     # 1. generator runs -> saves its paragraph to state['draft_text'].
     # 2. reviewer runs -> reads state['draft_text'] and saves its dictionary output to state['review_output'].
+        # the output of the reviewer is a code box with a json inside
+        # should it be parsed? with pydantic?
+
 
 async def main():
     await reflection()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
