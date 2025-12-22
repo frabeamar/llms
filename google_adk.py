@@ -3,15 +3,18 @@ import uuid
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
-from google.adk.agents import Agent, BaseAgent, LlmAgent
+from google.adk.agents import Agent, BaseAgent, LlmAgent, LoopAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.agents.parallel_agent import ParallelAgent
 from google.adk.agents.sequential_agent import SequentialAgent
 from google.adk.code_executors import BuiltInCodeExecutor
-from google.adk.events import Event
+from google.adk.events import Event, EventActions
 from google.adk.runners import InMemoryRunner, Runner
 from google.adk.sessions import InMemorySessionService
 from google.adk.tools import FunctionTool, google_search
+from google.genai import types
+from google.adk.agents import LlmAgent
+from google.adk.tools import agent_tool
 from google.genai import types
 
 load_dotenv(".env")
@@ -457,7 +460,9 @@ class TaskExecutor(BaseAgent):
 
     async def _run_async_impl(
         self, context: InvocationContext
-    ) -> AsyncGenerator[Event, None]: # AsyncGenerator[yield_type, send_type] you can send in values with send()!
+    ) -> AsyncGenerator[
+        Event, None
+    ]:  # AsyncGenerator[yield_type, send_type] you can send in values with send()!
         """Custom implementation logic for the task."""
         print("I am executing the task...", self.name)
         content = types.Content(role="system", parts=[types.Part(text="Task fineshed")])
@@ -498,10 +503,129 @@ async def multi_agent_collaboration():
     )
 
 
+class ConditionChecker(BaseAgent):
+    """A custom agent that checks for a 'completed' status in the session state."""
+
+    name: str = "ConditionChecker"
+    description: str = "Checks if a process is complete and signals the loop to stop."
+
+    async def _run_async_impl(
+        self, context: InvocationContext
+    ) -> AsyncGenerator[Event, None]:
+        """Checks state and yields an event to either continue or stop the loop."""
+        status = context.session.state.get("status", "pending")
+        is_done = status == "completed"
+
+        if is_done:
+            # Escalate to terminate the loop when the condition is met.
+            # escalete -> gives to the parent agent
+            yield Event(author=self.name, actions=EventActions(escalate=True))
+        else:
+            # Yield a simple event to continue the loop.
+            content = types.Content(
+                role="system",
+                parts=[types.Part(text="Condition not met, continuing loop.")],
+            )
+            yield Event(author=self.name, content=content)
+
+
+async def multi_agent_loop():
+    process_step = LlmAgent(
+        name="ProcessingStep",
+        model=GEMINI_MODEL,
+        instruction="You are a step in a longer process. Perform your task. If you are the final step, update session state by setting 'status' to 'completed'.",
+    )
+
+    # The LoopAgent orchestrates the workflow.
+    poller = LoopAgent(
+        name="StatusPoller",
+        max_iterations=10,
+        sub_agents=[
+            process_step,
+            ConditionChecker(),
+        ],
+    )
+    runner, user_id, session_id = await new_session(poller)
+    run_agent(
+        runner,
+        "Execute the multi-step process until completion.",
+        user_id,
+        session_id,
+    )
+
+
+
+
+def generate_image(prompt: str) -> dict:
+    """
+    Generates an image based on a textual prompt.
+
+    Args:
+        prompt: A detailed description of the image to generate.
+
+    Returns:
+        A dictionary with the status and the generated image bytes.
+    """
+    breakpoint()
+    print(f"TOOL: Generating image for prompt: '{prompt}'")
+    # In a real implementation, this would call an image generation API.
+    # For this example, we return mock image data.
+    mock_image_bytes = b"mock_image_data_for_a_cat_wearing_a_hat"
+    return {
+        "status": "success",
+        # The tool returns the raw bytes, the agent will handle the Part creation.
+        "image_bytes": mock_image_bytes,
+        "mime_type": "image/png"
+    }
+
+async def agent_as_tools():
+    image_generator_agent = LlmAgent(
+        name="ImageGen",
+        model=GEMINI_MODEL,
+        description="Generates an image based on a detailed text prompt.",
+        instruction=(
+            "You are an image generation specialist. Your task is to take the user's request "
+            "and use the `generate_image` tool to create the image. "
+            "The user's entire request should be used as the 'prompt' argument for the tool. "
+            "After the tool returns the image bytes, you MUST output the image."
+        ),
+        tools=[generate_image]
+    )
+
+    # 3. Wrap the agent in an AgentTool.
+    # The description here is what the parent agent sees.
+    image_tool = agent_tool.AgentTool(
+        agent=image_generator_agent,
+    )
+
+    # 4. The parent agent remains unchanged. Its logic was correct.
+    artist_agent = LlmAgent(
+        name="Artist",
+        model=GEMINI_MODEL,
+        instruction=(
+            "You are a creative artist. First, invent a creative and descriptive prompt for an image. "
+            "Then, use the `ImageGen` tool to generate the image using your prompt."
+        ),
+        tools=[image_tool]
+    )
+    runner, user_id, session_id = await new_session(artist_agent)
+    run_agent(
+        runner,
+        "Create an image of a cat wearing a hat.",
+        user_id,
+        session_id,
+    )
+
+
+
+
 async def main():
     # await builtin_google_search()
     # await call_agent_async("Calculate the value of (5 + 7) * 3")
-    await multi_agent_collaboration()
+    # await multi_agent_collaboration()
+    # await multi_agent_loop() # very expensive to run 
+    await agent_as_tools()
+
 
 
 if __name__ == "__main__":
