@@ -43,4 +43,7 @@ dependencies = [
     "langchain-google-genai",
     "google-adk",
     "deprecated",
+
+    # crew ai
+    "crewai"
 ]
