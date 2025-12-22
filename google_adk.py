@@ -1,4 +1,5 @@
 import asyncio
+import time
 import uuid
 from typing import AsyncGenerator
 
@@ -11,10 +12,8 @@ from google.adk.code_executors import BuiltInCodeExecutor
 from google.adk.events import Event, EventActions
 from google.adk.runners import InMemoryRunner, Runner
 from google.adk.sessions import InMemorySessionService
-from google.adk.tools import FunctionTool, google_search
-from google.genai import types
-from google.adk.agents import LlmAgent
-from google.adk.tools import agent_tool
+from google.adk.tools import FunctionTool, agent_tool, google_search
+from google.adk.tools.tool_context import ToolContext
 from google.genai import types
 
 load_dotenv(".env")
@@ -23,7 +22,7 @@ load_dotenv(".env")
 # running into 429 with gemini-2.0?
 GEMINI_MODEL = "gemini-2.5-flash"
 GEMINI_MODEL = "gemini-2.5-flash-lite"
-
+# GEMINI_MODEL = "gemini-3-flash" NOT FOUND
 
 def booking_handler(request: str) -> str:
     """
@@ -58,9 +57,7 @@ def unclear_handler(request: str) -> str:
     return f"Coordinator could not delegate request: '{request}'. Please clarify."
 
 
-def run_agent(
-    runner: InMemoryRunner, request: str, user_id: str, session_id: str
-) -> list[str]:
+def run_agent(runner: Runner, request: str, user_id: str, session_id: str) -> list[str]:
     """
     Runs an agent pipeline and collects ALL text responses
     from all final responses across agents.
@@ -554,8 +551,6 @@ async def multi_agent_loop():
     )
 
 
-
-
 def generate_image(prompt: str) -> dict:
     """
     Generates an image based on a textual prompt.
@@ -575,8 +570,9 @@ def generate_image(prompt: str) -> dict:
         "status": "success",
         # The tool returns the raw bytes, the agent will handle the Part creation.
         "image_bytes": mock_image_bytes,
-        "mime_type": "image/png"
+        "mime_type": "image/png",
     }
+
 
 async def agent_as_tools():
     image_generator_agent = LlmAgent(
@@ -589,7 +585,7 @@ async def agent_as_tools():
             "The user's entire request should be used as the 'prompt' argument for the tool. "
             "After the tool returns the image bytes, you MUST output the image."
         ),
-        tools=[generate_image]
+        tools=[generate_image],
     )
 
     # 3. Wrap the agent in an AgentTool.
@@ -606,7 +602,7 @@ async def agent_as_tools():
             "You are a creative artist. First, invent a creative and descriptive prompt for an image. "
             "Then, use the `ImageGen` tool to generate the image using your prompt."
         ),
-        tools=[image_tool]
+        tools=[image_tool],
     )
     runner, user_id, session_id = await new_session(artist_agent)
     run_agent(
@@ -617,15 +613,80 @@ async def agent_as_tools():
     )
 
 
+# --- Define the Recommended Tool-Based Approach ---
+def log_user_login(tool_context: ToolContext) -> dict:
+    """
+    Updates the session state upon a user login event.
+    This tool encapsulates all state changes related to a user login.
+    Args:
+        tool_context: Automatically provided by ADK, gives access to session state.
+    Returns:
+        A dictionary confirming the action was successful.
+    """
+    # Access the state directly through the provided context.
+    state = tool_context.state
+
+    # Get current values or defaults, then update the state.
+    # This is much cleaner and co-locates the logic.
+    breakpoint()
+    login_count = state.get("user:login_count", 0) + 1
+    state["user:login_count"] = login_count
+    state["task_status"] = "active"
+    state["user:last_login_ts"] = time.time()
+    state["temp:validation_needed"] = True
+
+    # print("State updated from within the `log_user_login` tool.")
+    print("STATE INSIDE TOOL:", tool_context.state)
+
+    return {
+        "status": "success",
+        "message": f"User login tracked. Total logins: {login_count}.",
+    }
+
+
+async def session_with_memory():
+    session_service = InMemorySessionService()
+    app_name, user_id, session_id = "state_app_tool", "user3", "session3"
+    session = await session_service.create_session(
+        app_name=app_name,
+        user_id=user_id,
+        session_id=session_id,
+        state={"user:login_count": 0, "task_status": "idle"},  # add initial state
+    )
+    print(f"Initial state: {session.state}")
+
+    # 2. Simulate a tool call (in a real app, the ADK Runner does this)
+    # We create a ToolContext manually just for this standalone example.
+    agent = Agent(
+        name="LoginAgent",
+        model=GEMINI_MODEL,
+        description="You are responsible for loggin in the user and updating session state.",
+        instruction="Log the user using the log_user_login tool.",
+        tools=[log_user_login],
+    )
+
+    runner = Runner(app_name=app_name, agent=agent, session_service=session_service)
+    run_agent(
+        runner,
+        "Log in the user and update session state.",
+        user_id,
+        session_id,
+    )
+    print("STATE AFTER TOOL CALL:", session.state)
+    session = await session_service.get_session(
+        app_name=app_name, user_id=user_id, session_id=session_id
+    )
+    if session:
+        print(session.state)
 
 
 async def main():
     # await builtin_google_search()
     # await call_agent_async("Calculate the value of (5 + 7) * 3")
     # await multi_agent_collaboration()
-    # await multi_agent_loop() # very expensive to run 
-    await agent_as_tools()
-
+    # await multi_agent_loop() # very expensive to run
+    # await agent_as_tools()
+    await session_with_memory()
 
 
 if __name__ == "__main__":
