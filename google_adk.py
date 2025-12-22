@@ -10,14 +10,11 @@ from google.adk.agents import Agent, LlmAgent
 from google.adk.agents.base_agent import BaseAgent
 from google.adk.agents.parallel_agent import ParallelAgent
 from google.adk.agents.sequential_agent import SequentialAgent
-from google.adk.runners import InMemoryRunner
-from google.adk.tools import FunctionTool
-from google.genai import types
-
-from google.adk.runners import Runner
+from google.adk.code_executors import BuiltInCodeExecutor
+from google.adk.runners import InMemoryRunner, Runner
 from google.adk.sessions import InMemorySessionService
-from google.adk.tools import google_search
-
+from google.adk.tools import FunctionTool, google_search
+from google.genai import types
 
 load_dotenv(".env")
 # --- Define Tool Functions ---
@@ -367,7 +364,6 @@ async def reflection():
 
 
 async def builtin_google_search():
-
     # Define Agent with access to search tool
     root_agent = Agent(
         name="basic_search_agent",
@@ -388,12 +384,74 @@ async def builtin_google_search():
     )
 
 
+async def call_agent_async(query):
+    code_agent = LlmAgent(
+        name="calculator_agent",
+        model=GEMINI_MODEL,
+        code_executor=BuiltInCodeExecutor(),
+        instruction="""You are a calculator agent.
+   When given a mathematical expression, write and execute Python code to calculate the result.
+   Return only the final numerical result as plain text, without markdown or code blocks.
+   """,
+        description="Executes Python code to perform calculations.",
+    )
+    # Session and Runner
+    session_id = str(uuid.uuid4())
+    user_id = "user_456"
+    app_name = "calculator"
+    session_service = InMemorySessionService()  # temporary memory of the session
+    # stored in RAM, gets deleted after program end
+    await session_service.create_session(app_name = app_name, user_id=user_id, session_id=session_id)
 
+    runner = Runner(  # handles cloud execution -> not sure for which aspects it is different than InMemoryRunner
+        agent=code_agent,
+        app_name=app_name,
+        # user_id=user_id,
+        # session_id=session_id,
+        session_service=session_service,
+    )
 
+    content = types.Content(role="user", parts=[types.Part(text=query)])
+    print(f"\n--- Running Query: {query} ---")
+    final_response_text = "No final text response captured."
+    try:
+        # Use run_async; need async for to loop over a generator of async events
+        async for event in runner.run_async(
+            user_id=user_id, session_id=session_id, new_message=content
+        ):
+            print(f"Event ID: {event.id}, Author: {event.author}")
+
+            # --- Check for specific parts FIRST ---
+            # has_specific_part = False
+            if event.content and event.content.parts and event.is_final_response():
+                for part in event.content.parts:  # Iterate through all parts
+                    breakpoint()
+                    if part.executable_code:
+                        # Access the actual code string via .code
+                        print(
+                            f"  Debug: Agent generated code:\n```python\n{part.executable_code.code}\n```"
+                        )
+                    elif part.code_execution_result:
+                        # Access outcome and output correctly
+                        print(
+                            f"  Debug: Code Execution Result: {part.code_execution_result.outcome} - Output:\n{part.code_execution_result.output}"
+                        )
+                    # Also print any text parts found in any event for debugging
+                    elif part.text and not part.text.isspace():
+                        print(f"  Text: '{part.text.strip()}'")
+
+                # --- Check for final response AFTER specific parts ---
+                text_parts = [part.text for part in event.content.parts if part.text]
+                final_result = "".join(text_parts)
+                print(f"==> Final Agent Response: {final_result}")
+
+    except Exception as e:
+        print(f"ERROR during agent run: {e}")
 
 
 async def main():
-    await builtin_google_search()
+    # await builtin_google_search()
+    await call_agent_async("Calculate the value of (5 + 7) * 3")
 
 
 if __name__ == "__main__":
