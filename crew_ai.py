@@ -1,13 +1,13 @@
 # pip install crewai langchain-openai
 
 import logging
-import os
 
-from crewai import Agent, Crew, Task
+from crewai import Agent, Crew, Process, Task
 from crewai.tools import tool
 from dotenv import load_dotenv
 
 from google_adk import GEMINI_MODEL
+
 # --- Load  API Key ---
 load_dotenv(".env")
 
@@ -16,8 +16,6 @@ load_dotenv(".env")
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
-
-
 
 
 # --- 1. Refactored Tool: Returns Clean Data ---
@@ -44,17 +42,17 @@ def get_stock_price(ticker: str) -> float:
         # The agent is equipped to handle exceptions and can decide on the next action.
         raise ValueError(f"Simulated price for ticker '{ticker.upper()}' not found.")
 
-def tool_calling():
 
+def tool_calling():
     # --- 2. Define the Agent ---
     financial_analyst_agent = Agent(
         role="Senior Financial Analyst",
         goal="Analyze stock data using provided tools and report key prices.",
         backstory="You are an experienced financial analyst adept at using data sources to find stock information. You provide clear, direct answers.",
         verbose=True,
-        llm = GEMINI_MODEL, # defaults to open model if not specified
+        llm=GEMINI_MODEL,  # defaults to open model if not specified
         tools=[get_stock_price],
-        allow_delegation=False, # prohibit calling other agents; tools are allowed
+        allow_delegation=False,  # prohibit calling other agents; tools are allowed
         # not sure what the other agents would be since none are defined
     )
 
@@ -95,8 +93,52 @@ def tool_calling():
     print("\nFinal Result:\n", result)
 
 
-# --- 5. Run the Crew within a Main Execution Block ---
+def planning():
+    # 2. Define a clear and focused agent
+    planner_writer_agent = Agent(
+        role="Article Planner and Writer",
+        goal="Plan and then write a concise, engaging summary on a specified topic.",
+        backstory=(
+            "You are an expert technical writer and content strategist. "
+            "Your strength lies in creating a clear, actionable plan before writing, "
+            "ensuring the final summary is both informative and easy to digest."
+        ),
+        verbose=True,
+        allow_delegation=False,
+        llm=GEMINI_MODEL,  # Assign the specific LLM to the agent
+    )
+
+    # 3. Define a task with a more structured and specific expected output
+    topic = "The importance of Reinforcement Learning in AI"
+    high_level_task = Task(
+        description=(
+            f"1. Create a bullet-point plan for a summary on the topic: '{topic}'.\n"
+            f"2. Write the summary based on your plan, keeping it around 200 words."
+        ),
+        expected_output=(
+            "A final report containing two distinct sections:\n\n"
+            "### Plan\n"
+            "- A bulleted list outlining the main points of the summary.\n\n"
+            "### Summary\n"
+            "- A concise and well-structured summary of the topic."
+        ),
+        agent=planner_writer_agent,
+    )
+
+    # Create the crew with a clear process
+    crew = Crew(
+        agents=[planner_writer_agent],
+        tasks=[high_level_task],
+        process=Process.sequential,  # force sequential execution (planning then writing)
+    )
+
+    # Execute the task
+    print("## Running the planning and writing task ##")
+    result = crew.kickoff()
+
+    print("\n\n---\n## Task Result ##\n---")
+    print(result)
 
 
 if __name__ == "__main__":
-    tool_calling()
+    planning()
