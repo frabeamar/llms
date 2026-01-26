@@ -1,7 +1,7 @@
-from pathlib import Path
-from time import sleep
-from typing import Any
 import urllib
+from pathlib import Path
+from typing import Any
+
 import bs4
 import dotenv
 from langchain.agents import create_agent
@@ -18,12 +18,14 @@ from langchain_core.documents import Document
 from langchain_core.runnables import chain
 from langchain_ollama import ChatOllama, OllamaEmbeddings, OllamaLLM
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from typer import Typer
 from llms.model import load_gemini_embeddings
+from typer import Typer
 
 from model import save_embedding_locally
+
 dotenv.load_dotenv(".env")
 app = Typer(pretty_exceptions_show_locals=False)
+
 
 @app.command()
 def retrieval():
@@ -41,7 +43,6 @@ def retrieval():
         chunk_size=1000, chunk_overlap=200, add_start_index=True
     )
     all_splits = text_splitter.split_documents(docs)
-
 
     # this has rate limits
     embeddings = load_gemini_embeddings()
@@ -70,7 +71,7 @@ def retrieval():
     results = vector_store.similarity_search(
         "How many distribution centers does Nike have in the US?"
     )
-    results = ret.batch( # or invoke, synchronous, batch async
+    results = ret.batch(  # or invoke, synchronous, batch async
         [
             "How many distribution centers does Nike have in the US?",
             "When was Nike incorporated?",
@@ -78,7 +79,8 @@ def retrieval():
     )
     for doc in results[0]:
         print(doc.page_content)
-    
+
+
 def load_blog():
     loader = WebBaseLoader(
         web_paths=("https://lilianweng.github.io/posts/2023-06-23-agent/",),
@@ -98,8 +100,6 @@ def load_blog():
 
 @app.command()
 def rag():
-
-
     # define a model and a vetor store
 
     model = ChatOllama(model="llama3.1")
@@ -122,7 +122,7 @@ def rag():
     def retrieve_context(query: str):
         """Retrieve information to help answer a query."""
         retrieved_docs = vector_store.similarity_search(query, k=10)
-  
+
         serialized = "\n\n".join(
             (f"Source: {doc.metadata}\nContent: {doc.page_content}")
             for doc in retrieved_docs
@@ -189,7 +189,9 @@ class RetrieveDocumentsMiddleware(AgentMiddleware[State]):
 
     def before_model(self, state: AgentState) -> dict[str, Any] | None:
         last_message = state["messages"][-1]
-        ret  = self.vector_store.as_retriever(search_type="similarity", search_kwargs={"k":10})
+        ret = self.vector_store.as_retriever(
+            search_type="similarity", search_kwargs={"k": 10}
+        )
         retrieved_docs = ret.invoke(last_message.text)
 
         docs_content = "\n\n".join(doc.page_content for doc in retrieved_docs)
@@ -207,7 +209,6 @@ class RetrieveDocumentsMiddleware(AgentMiddleware[State]):
         }
 
 
-
 @app.command()
 def rag_middleware():
     vector_store = Chroma(
@@ -217,13 +218,13 @@ def rag_middleware():
     )
     save_embedding_locally(vector_store=vector_store, all_splits=load_blog())
     all_docs = vector_store.get(include=["documents"])
-    print("Documents in vector store",  len(all_docs["documents"]))
+    print("Documents in vector store", len(all_docs["documents"]))
     chatbot = OllamaLLM(model="llama3.1")
     agent = create_agent(
         chatbot,
         tools=[],
         middleware=[RetrieveDocumentsMiddleware(vector_store=vector_store)],
-    )   
+    )
     for step in agent.stream(
         {"messages": [{"role": "user", "content": "Explain task decomposition."}]},
         stream_mode="values",

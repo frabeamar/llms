@@ -11,7 +11,7 @@ dependencies = [
     "langchain-core",
     "langchain-chroma",
     "langchain-ollama",
-    "langchain==1.0.7",
+    "langchain",
     "langchain-text-splitters",
     "langgraph-checkpoint-postgres",
     "psycopg-binary",
@@ -46,6 +46,5 @@ dependencies = [
     # crew ai
     "crewai",
 
-    #ragas
-    "ragas==0.4.3"
+    "datasets"
 ]
