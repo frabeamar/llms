@@ -1,31 +1,47 @@
-from langchain_ollama import OllamaEmbeddings, ChatOllama
-from langchain.chains import HypotheticalDocumentEmbedder
+import asyncio
+import logging
 from dataclasses import dataclass
-from functools import cached_property
 from pathlib import Path
-from time import sleep
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.runnables import RunnableSerializable
-from langchain_core.output_parsers import StrOutputParser
+
 import dotenv
-from numpy import single
-from ollama import chat
+import matplotlib.pyplot as plt
 import pandas as pd
-import torch
+import seaborn as sns
+import tqdm
 from langchain.indexes import SQLRecordManager, index
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import DataFrameLoader
 from langchain_core.documents import Document
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts.chat import ChatPromptTemplate
+from langchain_core.runnables import RunnablePassthrough, RunnableSerializable
 from langchain_core.vectorstores.base import VectorStoreRetriever
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-import tqdm
+from openai import AsyncOpenAI
+from ragas.embeddings.base import embedding_factory
+from ragas.llms import llm_factory
+from ragas.metrics.collections import (
+    AnswerRelevancy,
+    ContextEntityRecall,
+    ContextPrecision,
+    ContextRecall,
+    FactualCorrectness,
+    Faithfulness,
+)
+from typer import Typer
+
 from evaluate_llms import evaluate
+from my_log import setup_logging
+
+setup_logging(__name__)
 dotenv.load_dotenv(".env")
+app = Typer(pretty_exceptions_show_locals=False)
+log = logging.getLogger(__name__)
 
-
-DATA = Path("small_rag_dataset")
+DATA = Path.home() / "data"
+DIVIDER = "+++++"
 
 
 @dataclass
@@ -47,11 +63,11 @@ class TextPipeline:
         vector_store = Chroma(
             collection_name="documents",
             embedding_function=embeddings,
-            persist_directory="./chroma_db",
+            persist_directory=str(DATA / "chroma_db"),
         )
         retriever = vector_store.as_retriever(search_kwargs={"k": 5})
         record_manager = SQLRecordManager(
-            cls.namespace, db_url="sqlite:///record_manager_cache.sql"
+            cls.namespace, db_url=f"sqlite:///{DATA}/record_manager_cache.sql"
         )
 
         record_manager.create_schema()
@@ -76,29 +92,15 @@ class TextPipeline:
 
     def query(self, query: list[str]):
         found = self.retriever.batch(query)
-        return [[d.page_content for d in f ] for f in found ]
+        return [[d.page_content for d in f] for f in found]
 
-    @cached_property
-    def hypothetical_document_embedder(self):
-        # Create the HyDE embedder
-        return  HypotheticalDocumentEmbedder.from_llm(
-            self.chat, 
-            self.embeddings, 
-            "web_search" # Pre-defined prompt style
-        )
-
-    def hypo_query_search(self, query:list[str]):
-        ret = self.vector_store.as_retriever(search_type= "mmr", k=20)
-        found = [f.page_content for f in ret.invoke(query[0])]
-        self.vector_store.similarity_search(query[0])
-        return self.query(augmented_query)
 
 @dataclass
 class ChatBot:
     chain: RunnableSerializable
 
     @classmethod
-    def default(cls, text_pipeline:TextPipeline):
+    def default(cls):
         template = """
     Answer the question based on the context below. If you can't 
     answer the question, reply "I don't know".
@@ -107,28 +109,22 @@ class ChatBot:
 
     Question: {question}
     """
-        return cls.with_prompt(template,text_pipeline)
-    
-    @classmethod
-    def with_prompt(cls, prompt,text_pipeline:TextPipeline):
-        parser = StrOutputParser()
+        prompt = ChatPromptTemplate.from_template(
+            template=template,
+        )
 
-        prompt = ChatPromptTemplate.from_template(prompt)
-        
+        parser = StrOutputParser()
         chain = (
             {"context": RunnablePassthrough(), "question": RunnablePassthrough()}
             | prompt
-            | text_pipeline.chat
+            | ChatOllama(model="llama3.2")
             | parser
         )
+
         return ChatBot(chain)
 
 
-
-def main() -> None:
-    torch.mps.set_per_process_memory_fraction(0.0)
-    # set_per_process_memory_fraction: max gpu memory a model can take
-
+def rags() -> None:
     # load and prepare datasets
     docs = []
     for doc in [
@@ -136,7 +132,7 @@ def main() -> None:
         "single_passage_answer_questions",
         "no_answer_questions",
     ]:
-        df = pd.read_csv(DATA / f"{doc}.csv")
+        df = pd.read_csv(DATA / "small_rag_dataset" / f"{doc}.csv")
         if doc == "no_answer_questions":
             df["expected_answer"] = (
                 "The answer to your question is not in the provided text."
@@ -150,20 +146,137 @@ def main() -> None:
 
     df = pd.concat(docs)
 
-    documents = pd.read_csv(DATA / "documents.csv")
+    documents = pd.read_csv(DATA / "small_rag_dataset/documents.csv")
     docs = DataFrameLoader((documents)).load()
     pipeline = TextPipeline.default()
 
-    chatbot = ChatBot.default(pipeline)
-    single_passage = df[df.doc_type == "single_passage_answer_questions"].question
+    chatbot = ChatBot.default()
 
-    
-    context = pipeline.query(list(single_passage))
-    data = [{"context":c, "question":p} for c, p in zip(context, single_passage)]
+    context = pipeline.query(list(df.question))
+    data = [
+        {"context": c, "question": p, "expected_answer": a}
+        for c, p, a in zip(context, df.question, df.expected_answer)
+    ]
     answer = chatbot.chain.batch(data)
-    evals = evaluate(data, pipeline.chat)
-    breakpoint()
+    evals = evaluate(data)
+    df_evals = pd.DataFrame(evals)
+    df_evals["answer"] = answer
+    df_evals["context"] = [DIVIDER.join(d["context"]) for d in data]
+    df_evals.to_csv("evals.csv", index=False)
+    ## need to check if I get numbers
 
 
+async def ragas_metrics():
+    ollama_client = AsyncOpenAI(
+        base_url="http://localhost:11434/v1",
+        api_key="ollama",  # Ollama doesn't check keys, but Ragas/OpenAI client requires a string
+    )
 
-main()
+    evaluator_llm = llm_factory(model="llama3", client=ollama_client)
+
+    log.info("Faithfulness score")
+    # results = evaluate(dataset=my_dataset, metrics=[...], llm=evaluator_llm))
+
+    df_evals = pd.read_csv("evals.csv")
+
+    embeddings = embedding_factory(
+        provider="openai",
+        model="mxbai-embed-large",  # Replace with the model you 'ollama pull'ed
+        client=ollama_client,
+    )
+    # --- RETRIEVER METRICS ---
+    # Evaluates the quality of the search results (Context)
+
+    # Measures if the most relevant chunks are ranked at the top of the results.
+    precision = ContextPrecision(llm=evaluator_llm)
+    # Measures if the retrieved context contains enough info to reach the ground truth.
+    recall = ContextRecall(llm=evaluator_llm)
+    # A specialized recall that checks if key entities (names, dates, places)
+    # from the reference are present in the retrieved context.
+    entity_recall = ContextEntityRecall(llm=evaluator_llm)
+
+    # --- GENERATOR METRICS ---
+    # Evaluates the quality of the AI's generated response (Answer)
+
+    # Measures "Groundedness": Does the answer stay true to the retrieved context
+    # and avoid hallucinations?
+    faithfulness = Faithfulness(llm=evaluator_llm)
+    # Measures "Truth": How well does the answer match the human-verified
+    # ground truth (Reference)?
+    factual_correctness = FactualCorrectness(llm=evaluator_llm)
+    # Measures "Helpfulness": Does the answer directly address the user's
+    # question, regardless of the source?
+    answer_relevancy = AnswerRelevancy(llm=evaluator_llm, embeddings=embeddings)
+    df_evals = pd.read_csv("evals.csv")
+    scores = []
+
+    log.info("Start evaluations")
+    for i, row in tqdm.tqdm(
+        df_evals.iterrows(), "Evaluate the RAG system", tot=len(df_evals)
+    ):
+        user_input = row.question
+        response = row.answer
+        reference = row.expected_answer
+        context = row.context.split(DIVIDER)
+
+        score = {}
+
+        score["answer_relevancy"] = await answer_relevancy.ascore(
+            user_input=user_input,
+            response=response,
+        )
+
+        score["faithfullness"] = await faithfulness.ascore(
+            user_input=user_input,
+            response=response,
+            retrieved_contexts=context,
+        )  # should be a list of strings
+
+        score["context_precision"] = await precision.ascore(
+            user_input=user_input,
+            reference=reference,
+            retrieved_contexts=context,
+        )
+        score["context_recall"] = await recall.ascore(
+            user_input=user_input,
+            reference=reference,
+            retrieved_contexts=context,
+        )
+        score["entity_recall"] = await entity_recall.ascore(
+            reference=response, retrieved_contexts=context
+        )
+
+        score["factual_correctness"] = await factual_correctness.ascore(
+            reference=reference,
+            response=response,
+        )
+
+        score = {s: c.value for s, c in score.items()}
+        scores.append(score)
+        # seems to be rather low. Might need a better judge
+    pd.DataFrame(scores).to_csv("scores.csv")
+
+
+def plot():
+    melted = pd.melt(
+        pd.read_csv("evals.csv"),
+        id_vars=[
+            "context",
+            "question",
+            "relevance_score",
+            "relevance_eval",
+            "standalone_score",
+            "standalone_eval",
+        ],
+    )
+    sns.displot(melted, x="value", kind="hist", row="variable")
+    plt.savefig("scores")
+
+
+@app.command()
+def main():
+    rags()
+    asyncio.run(ragas_metrics())
+
+
+app()

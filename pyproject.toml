@@ -11,11 +11,12 @@ dependencies = [
     "langchain-core",
     "langchain-chroma",
     "langchain-ollama",
-    "langchain",
+    "langchain==0.3.0",
     "langchain-text-splitters",
     "langgraph-checkpoint-postgres",
     "psycopg-binary",
     "tqdm",
+    "seaborn",
 
     "dotenv",
     "pypdf",
@@ -46,5 +47,19 @@ dependencies = [
     # crew ai
     "crewai",
 
-    "datasets"
+    "datasets",
+    "ragas==0.4.3",
+
+    "rich",
+    "unsloth",
+    "bitsandbytes", # need for unsloth
+    "xformers"
+]
+
+[tool.pyright]
+include = ["src"]
+exclude = [
+    "small_rag_dataset/",
+    "*_db/",
+    "*.sql"
 ]
