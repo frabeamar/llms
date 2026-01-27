@@ -53,7 +53,11 @@ dependencies = [
     "rich",
     "unsloth",
     "bitsandbytes", # need for unsloth
-    "xformers"
+    "xformers",
+    "unsloth_zoo[base] @ git+https://github.com/unslothai/unsloth-zoo",
+    "unsloth[base] @ git+https://github.com/unslothai/unsloth",
+    "torch>=2.8.0",
+    "triton>=3.4.0"
 ]
 
 [tool.pyright]
