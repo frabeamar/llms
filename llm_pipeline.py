@@ -1,10 +1,12 @@
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import dotenv
 import matplotlib.pyplot as plt
+import nest_asyncio
 import pandas as pd
 import seaborn as sns
 import tqdm
@@ -20,6 +22,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmb
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from openai import AsyncOpenAI
+from ragas.cache import DiskCacheBackend
 from ragas.embeddings.base import embedding_factory
 from ragas.llms import llm_factory
 from ragas.metrics.collections import (
@@ -34,6 +37,11 @@ from typer import Typer
 
 from evaluate_llms import evaluate
 from my_log import setup_logging
+
+os.environ["LANGCHAIN_TRACING_V2"] = "false"
+os.environ["LANGSMITH_TRACING"] = "false"
+os.environ["LANGFUSE_TRACING_ENABLED"] = "false"
+nest_asyncio.apply()
 
 setup_logging(__name__)
 dotenv.load_dotenv(".env")
@@ -149,6 +157,7 @@ def rags() -> None:
     documents = pd.read_csv(DATA / "small_rag_dataset/documents.csv")
     docs = DataFrameLoader((documents)).load()
     pipeline = TextPipeline.default()
+    pipeline.load_incrementally(docs)
 
     chatbot = ChatBot.default()
 
@@ -179,10 +188,12 @@ async def ragas_metrics():
 
     df_evals = pd.read_csv("evals.csv")
 
+    cache = DiskCacheBackend(cache_dir=DATA / "my_eval_cache")
     embeddings = embedding_factory(
         provider="openai",
         model="mxbai-embed-large",  # Replace with the model you 'ollama pull'ed
         client=ollama_client,
+        cache=cache,
     )
     # --- RETRIEVER METRICS ---
     # Evaluates the quality of the search results (Context)
@@ -212,7 +223,7 @@ async def ragas_metrics():
 
     log.info("Start evaluations")
     for i, row in tqdm.tqdm(
-        df_evals.iterrows(), "Evaluate the RAG system", tot=len(df_evals)
+        df_evals.iterrows(), "Evaluate the RAG system", total=len(df_evals)
     ):
         user_input = row.question
         response = row.answer
@@ -275,7 +286,7 @@ def plot():
 
 @app.command()
 def main():
-    rags()
+    # rags()
     asyncio.run(ragas_metrics())
 
 

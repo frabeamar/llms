@@ -35,7 +35,7 @@ Give your answer on a scale of 1 to 5, where 1 means that the question is not us
 Now here is the question.
 
 Question: {question}\n
-Answer::: """
+"""
 
 question_standalone_critique_prompt = """
 You will be given a question.
@@ -46,11 +46,10 @@ For instance, if the question refers to a particular setting, like 'in the conte
 Now here is the question.
 
 Question: {question}\n
-Answer::: """
+"""
 
 
 class TotalRating(BaseModel):
-    answer: str = Field(description="answer to the question")
     total_rating: int = Field(
         description="Total Rating score (your rating, as only a number between 1 and 5), without additional text"
     )
@@ -95,6 +94,7 @@ def evaluate(outputs: list[dict]):
         for criterion, bot in bots.items():
             try:
                 answer = bot.chain.invoke(output)
+                
                 output.update(
                     {
                         f"{criterion}_score": answer.total_rating,
@@ -103,6 +103,6 @@ def evaluate(outputs: list[dict]):
                 )
             except OutputParserException as e:
                 print(e)
-                logging.error(answer)
+                continue
 
     return outputs
