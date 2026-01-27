@@ -181,7 +181,7 @@ async def ragas_metrics():
         api_key="ollama",  # Ollama doesn't check keys, but Ragas/OpenAI client requires a string
     )
 
-    evaluator_llm = llm_factory(model="llama3", client=ollama_client)
+    evaluator_llm = llm_factory(model="llama3", client=ollama_client, max_tokens=2048)
 
     log.info("Faithfulness score")
     # results = evaluate(dataset=my_dataset, metrics=[...], llm=evaluator_llm))
